@@ -28,10 +28,38 @@ class PriorityExhibitionAgent:
         if self._progress:
             self._progress(pct, desc=msg)
 
+    def _filter_exhibitions(self, exhibitions: list, query: str) -> list:
+        lines = "\n".join(
+            f"{i+1}. {e.name} | Category: {e.category} | Tags: {e.tags}"
+            for i, e in enumerate(exhibitions)
+        )
+        prompt = f"""From the list below, select exhibitions whose category or tags are RELEVANT to: "{query}"
+Return only the line numbers of relevant exhibitions, separated by commas.
+If none, return: NONE
+
+{lines}"""
+        result = self.llm.call("You are a domain expert in defense and security exhibitions.", prompt)
+        if not result or result.strip().upper() == "NONE":
+            return []
+        indices = set()
+        for part in result.split(","):
+            part = part.strip()
+            if part.isdigit():
+                idx = int(part) - 1
+                if 0 <= idx < len(exhibitions):
+                    indices.add(idx)
+        return [exhibitions[i] for i in sorted(indices)]
+
     async def run(self, excel_path: str, user_query: str) -> str:
         self._set_progress(0.02, "Đọc file Excel...")
         exhibitions = read_priority_exhibitions(excel_path)
-        logger.info(f"Bước 1: {len(exhibitions)} triển lãm")
+        logger.info(f"Bước 1a: {len(exhibitions)} triển lãm (tất cả)")
+
+        self._set_progress(0.03, "Lọc triển lãm theo yêu cầu...")
+        exhibitions = self._filter_exhibitions(exhibitions, user_query)
+        logger.info(f"Bước 1b: {len(exhibitions)} triển lãm phù hợp với yêu cầu")
+        if not exhibitions:
+            return "Không có triển lãm nào phù hợp với yêu cầu."
 
         self._set_progress(0.05, f"Tìm hãng từ {len(exhibitions)} triển lãm...")
         all_raw = []
@@ -53,9 +81,9 @@ class PriorityExhibitionAgent:
         if not unique:
             return "Không tìm thấy hãng nào từ danh sách triển lãm."
 
-        self._set_progress(0.60, f"Lọc {len(unique)} hãng theo yêu cầu...")
-        relevant = await self._filter_relevant(unique, user_query)
-        logger.info(f"   Số hãng phù hợp: {len(relevant)}")
+        self._set_progress(0.60, f"Tìm sản phẩm cho từng hãng theo yêu cầu...")
+        relevant = await self._find_relevant_companies(unique, user_query)
+        logger.info(f"   Số hãng có sản phẩm phù hợp: {len(relevant)}")
 
         if not relevant:
             return "Không có hãng nào phù hợp với yêu cầu."
@@ -73,24 +101,35 @@ class PriorityExhibitionAgent:
         self._set_progress(1.0, "Hoàn tất!")
         return report
 
-    async def _filter_relevant(self, companies: list[str], query: str) -> list[str]:
-        batch_size = 50
+    async def _find_relevant_companies(self, companies: list[str], query: str) -> list[str]:
+        async def check(company: str) -> str | None:
+            results = self.searcher.search([f"{company} {query}"])
+            if not results:
+                return None
+            snippets = " ".join(r.get("snippet", "")[:200] for r in results[:5])
+            if len(snippets) < 20:
+                return None
+            prompt = f"""Does this company provide products or solutions related to "{query}"?
+Based on the search snippets below, answer only YES or NO.
+
+Company: {company}
+Snippets: {snippets}"""
+            answer = self.llm.call("You are a product research assistant.", prompt)
+            if answer and "YES" in answer.upper():
+                logger.info(f"   ✅ {company} — có sản phẩm liên quan")
+                return company
+            return None
+
         relevant = []
+        batch_size = 10
         for i in range(0, len(companies), batch_size):
             batch = companies[i:i + batch_size]
-            company_list = "\n".join(f"- {c}" for c in batch)
-            prompt = f"""From the following list of companies, which ones produce or supply products related to "{query}"?
-Return only the company names that are relevant, one per line, without dashes or numbers.
-If none are relevant, return exactly: NONE
-
-Companies:
-{company_list}"""
-            result = self.llm.call("You are a product research expert.", prompt)
-            if result and result.strip().upper() != "NONE":
-                for line in result.split("\n"):
-                    line = line.strip().lstrip("- ").strip().lstrip("1234567890. ").strip()
-                    if line and line.upper() != "NONE":
-                        relevant.append(line)
+            self._set_progress(0.60 + 0.20 * i / len(companies), f"Kiểm tra hãng {i+1}-{min(i+batch_size, len(companies))}/{len(companies)}...")
+            tasks = [check(c) for c in batch]
+            results = await asyncio.gather(*tasks)
+            for r in results:
+                if r:
+                    relevant.append(r)
         return relevant
 
 
