@@ -1,5 +1,8 @@
 import os
+from dotenv import load_dotenv
 import requests
+
+load_dotenv()
 
 LLM_API = os.getenv("LLM_API_URL", "http://localhost:8080/v1/chat/completions")
 

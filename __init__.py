@@ -1,3 +1,4 @@
-from .exhibition_research_agent import ProductDiscoveryAgent
+from agents.product_discovery import ProductDiscoveryAgent
+from agents.priority_exhibition import PriorityExhibitionAgent
 
-__all__ = ["ProductDiscoveryAgent"]
+__all__ = ["ProductDiscoveryAgent", "PriorityExhibitionAgent"]

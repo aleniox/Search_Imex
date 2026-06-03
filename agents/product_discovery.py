@@ -1,43 +1,40 @@
-"""Agent tìm hãng sản xuất — search web, crawl từng URL để lấy danh sách hãng.
-
-Cách dùng:
-    import asyncio
-    from searchs.exhibition_research_agent import ProductDiscoveryAgent
-    agent = ProductDiscoveryAgent()
-    result = asyncio.run(agent.run("Phần mềm phân tích mã độc cho hệ thống máy tính"))
-    print(result)
-"""
 import sys
 import asyncio
 import logging
 
-from llm_client import LLMClient
-from crawler import WebCrawler
-from searcher import Searcher
-from extractor import CompanyExtractor
-from reporter import ReportCompiler
+from core.llm_client import LLMClient
+from core.crawler import WebCrawler
+from core.searcher import Searcher
+from core.extractor import CompanyExtractor
+from core.reporter import ReportCompiler
+from core.search_providers import BaseSearchProvider
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 
 class ProductDiscoveryAgent:
-    def __init__(self):
+    def __init__(self, search_provider: str | BaseSearchProvider = None, progress_callback=None):
         self.llm = LLMClient()
         self.crawler = WebCrawler()
-        self.searcher = Searcher()
+        self.searcher = Searcher(provider=search_provider)
         self.extractor = CompanyExtractor(self.llm)
         self.reporter = ReportCompiler()
         self.companies: list[str] = []
         self.homepages: list[dict] = []
         self.last_response = ""
+        self._progress = progress_callback
+
+    def _set_progress(self, pct: float, msg: str):
+        if self._progress:
+            self._progress(pct, desc=msg)
 
     async def run(self, user_query: str) -> str:
         self.companies = []
         self.homepages = []
         self.last_response = ""
 
-        logger.info("─" * 50)
+        self._set_progress(0.05, "Dịch query sang tiếng Anh...")
         logger.info(f"Step 1: Search URLs for: {user_query}")
 
         en_query = self.llm.call(
@@ -48,18 +45,19 @@ class ProductDiscoveryAgent:
             en_query = en_query.strip().strip('"\'')
         logger.info(f"   English: {en_query}")
 
+        self._set_progress(0.1, "Đang search web...")
         results = self.searcher.search([user_query, en_query or user_query])
         logger.info(f"   Got {len(results)} search results")
 
-        logger.info("─" * 50)
-        logger.info("Step 2: Crawl each URL and extract companies")
-
+        self._set_progress(0.2, "Đang crawl & trích xuất hãng...")
         all_companies = []
         seen = set()
         urls = list(dict.fromkeys(r["link"] for r in results if r.get("link")))
+        total_urls = min(len(urls), 3)
 
         for i, url in enumerate(urls[:3], 1):
-            logger.info(f"[{i}/{min(len(urls), 3)}] Crawling: {url}")
+            self._set_progress(0.2 + 0.5 * i / total_urls, f"Crawl {i}/{total_urls}...")
+            logger.info(f"[{i}/{total_urls}] Crawling: {url}")
             md = await self.crawler.crawl(url)
             if not md:
                 continue
@@ -75,22 +73,22 @@ class ProductDiscoveryAgent:
         if not self.companies:
             return "Không tìm thấy hãng nào phù hợp."
 
-        logger.info("─" * 50)
-        logger.info(f"Step 3: Find homepages for {len(self.companies)} companies")
-        for company in self.companies:
+        self._set_progress(0.7, f"Tìm homepage cho {len(self.companies)} hãng...")
+        for i, company in enumerate(self.companies):
+            self._set_progress(0.7 + 0.25 * (i + 1) / len(self.companies), f"Tìm homepage: {company}")
             url = self.searcher.find_homepage(company)
             self.homepages.append({"company": company, "url": url})
             logger.info(f"   {'✅' if url else '❌'} {company} -> {url or 'không tìm thấy'}")
 
-        logger.info("─" * 50)
-        logger.info("Step 4: Compile report")
+        self._set_progress(0.95, "Tổng hợp báo cáo...")
         self.last_response = self.reporter.compile(user_query, self.companies, self.homepages)
+        self._set_progress(1.0, "Hoàn tất!")
         return self.last_response
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print('Usage: python exhibition_research_agent.py "Yêu cầu sản phẩm"')
+        print('Usage: python -m agents.product_discovery "Yêu cầu sản phẩm"')
         sys.exit(1)
     query = " ".join(sys.argv[1:])
     agent = ProductDiscoveryAgent()
