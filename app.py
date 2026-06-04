@@ -99,12 +99,6 @@ with gr.Blocks(title="Search Agent UI") as demo:
 
     query = gr.Textbox(label="Yêu cầu (query)", placeholder="VD: Phần mềm phân tích mã độc cho hệ thống máy tính")
 
-    seed_url = gr.Textbox(
-        label="URL triển lãm (cho BrowserAgent)",
-        placeholder="https://vietnamdefence.vdi.org.vn/",
-        visible=False,
-    )
-
     with gr.Row():
         excel_file = gr.File(
             label="Upload file Excel (cho PriorityExhibitionAgent / SmartAgent)",
@@ -121,19 +115,10 @@ with gr.Blocks(title="Search Agent UI") as demo:
 
     def toggle_ui(agent_type):
         show_excel = agent_type in ("PriorityExhibitionAgent", "SmartAgent")
-        show_url = agent_type == "BrowserAgent"
         show_scan = agent_type == "PriorityExhibitionAgent"
-        return (
-            gr.update(visible=show_excel),
-            gr.update(visible=show_url),
-            gr.update(visible=show_scan),
-        )
+        return gr.update(visible=show_excel), gr.update(visible=show_scan)
 
-    agent_type.change(
-        fn=toggle_ui,
-        inputs=agent_type,
-        outputs=[excel_file, seed_url, scan_all],
-    )
+    agent_type.change(fn=toggle_ui, inputs=agent_type, outputs=[excel_file, scan_all])
 
     run_btn = gr.Button("▶ Run", variant="primary", size="lg")
 
@@ -142,7 +127,7 @@ with gr.Blocks(title="Search Agent UI") as demo:
 
     run_btn.click(
         fn=run_agent,
-        inputs=[agent_type, provider, query, excel_file, seed_url, scan_all],
+        inputs=[agent_type, provider, query, excel_file, scan_all],
         outputs=[result_box, log_box],
     )
 
