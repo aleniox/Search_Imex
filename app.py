@@ -7,6 +7,7 @@ import gradio as gr
 
 from agents.product_discovery import ProductDiscoveryAgent
 from agents.priority_exhibition import PriorityExhibitionAgent
+from agents.smart_agent import SmartAgent
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -45,7 +46,8 @@ async def run_agent(agent_type, provider, query, excel_file, scan_all, progress=
             await asyncio.sleep(0.01)
             agent = ProductDiscoveryAgent(search_provider=provider, progress_callback=cb)
             result = await agent.run(query)
-        else:
+
+        elif agent_type == "PriorityExhibitionAgent":
             if excel_file is None:
                 return "Vui lòng upload file Excel", "Thiếu file Excel"
             excel_path = excel_file.name if hasattr(excel_file, 'name') else excel_file
@@ -53,6 +55,23 @@ async def run_agent(agent_type, provider, query, excel_file, scan_all, progress=
             await asyncio.sleep(0.01)
             agent = PriorityExhibitionAgent(search_provider=provider, progress_callback=cb)
             result = await agent.run(excel_path, query, scan_all=scan_all)
+
+        elif agent_type == "SmartAgent":
+            progress(0.01, desc="Khởi tạo SmartAgent...")
+            await asyncio.sleep(0.01)
+            agent = SmartAgent(search_provider=provider, progress_callback=cb)
+            excel_path = excel_file.name if excel_file and hasattr(excel_file, 'name') else (excel_file or "")
+            raw = await agent.run(query, excel_path=excel_path)
+            lines = []
+            for r in raw:
+                status = "✅" if r.get("verified") else "❌"
+                sp = ", ".join(r.get("products", []))
+                lines.append(f'{status} {r["company"]:25s} | {r.get("homepage",""):35s} | SP: {sp}')
+            result = "\n".join(lines) if lines else "Không tìm thấy hãng nào."
+
+        else:
+            return "Agent không hợp lệ", "Lỗi"
+
         log_text = "\n".join(strip_ansi(l) for l in LOG_CAPTURE[-100:])
         return result, log_text
     except Exception as e:
@@ -61,17 +80,13 @@ async def run_agent(agent_type, provider, query, excel_file, scan_all, progress=
         return f"Lỗi: {e}", log_text
 
 
-def toggle_excel(agent_type):
-    return gr.update(visible=agent_type == "PriorityExhibitionAgent")
-
-
 with gr.Blocks(title="Search Agent UI") as demo:
     gr.Markdown("# 🔍 Search Agent UI")
 
     with gr.Row():
         with gr.Column(scale=1):
             agent_type = gr.Dropdown(
-                choices=["ProductDiscoveryAgent", "PriorityExhibitionAgent"],
+                choices=["ProductDiscoveryAgent", "PriorityExhibitionAgent", "SmartAgent"],
                 value="ProductDiscoveryAgent",
                 label="Agent",
             )
@@ -83,26 +98,42 @@ with gr.Blocks(title="Search Agent UI") as demo:
             )
 
     query = gr.Textbox(label="Yêu cầu (query)", placeholder="VD: Phần mềm phân tích mã độc cho hệ thống máy tính")
-    
+
+    seed_url = gr.Textbox(
+        label="URL triển lãm (cho BrowserAgent)",
+        placeholder="https://vietnamdefence.vdi.org.vn/",
+        visible=False,
+    )
+
     with gr.Row():
         excel_file = gr.File(
-            label="Upload file Excel",
+            label="Upload file Excel (cho PriorityExhibitionAgent / SmartAgent)",
             file_types=[".xlsx", ".xls"],
             visible=False,
-            scale=3
+            scale=3,
         )
         scan_all = gr.Checkbox(
-            label="Quét tất cả triển lãm (Scan All)",
+            label="Quét tất cả triển lãm",
             value=False,
             visible=False,
-            scale=1
+            scale=1,
         )
 
-    def toggle_priority_ui(agent_type):
-        is_priority = agent_type == "PriorityExhibitionAgent"
-        return gr.update(visible=is_priority), gr.update(visible=is_priority)
+    def toggle_ui(agent_type):
+        show_excel = agent_type in ("PriorityExhibitionAgent", "SmartAgent")
+        show_url = agent_type == "BrowserAgent"
+        show_scan = agent_type == "PriorityExhibitionAgent"
+        return (
+            gr.update(visible=show_excel),
+            gr.update(visible=show_url),
+            gr.update(visible=show_scan),
+        )
 
-    agent_type.change(fn=toggle_priority_ui, inputs=agent_type, outputs=[excel_file, scan_all])
+    agent_type.change(
+        fn=toggle_ui,
+        inputs=agent_type,
+        outputs=[excel_file, seed_url, scan_all],
+    )
 
     run_btn = gr.Button("▶ Run", variant="primary", size="lg")
 
@@ -111,7 +142,7 @@ with gr.Blocks(title="Search Agent UI") as demo:
 
     run_btn.click(
         fn=run_agent,
-        inputs=[agent_type, provider, query, excel_file, scan_all],
+        inputs=[agent_type, provider, query, excel_file, seed_url, scan_all],
         outputs=[result_box, log_box],
     )
 
