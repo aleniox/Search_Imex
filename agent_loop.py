@@ -20,7 +20,7 @@ BLOCKED_DOMAINS = [
 SPAM_DOMAINS = ["xnxx", "xhamster", "xvideo", "pornhat", "sexvid", "porn", "xxx", "xvideos"]
 
 
-def call_llm(system: str, user: str) -> str | None:
+def call_llm(system: str, user: str) -> tuple[str | None, dict]:
     payload = {
         "model": "", "messages": [
             {"role": "system", "content": system},
@@ -31,8 +31,10 @@ def call_llm(system: str, user: str) -> str | None:
     }
     resp = requests.post(LLM_API, json=payload, stream=False, timeout=120)
     if resp.status_code != 200:
-        return None
-    return resp.json()["choices"][0]["message"]["content"]
+        return None, {}
+    data = resp.json()
+    print(data.get("usage", data))
+    return data["choices"][0]["message"]["content"], data.get("usage", {})
 
 
 def search_web(queries: list[str]) -> str:
