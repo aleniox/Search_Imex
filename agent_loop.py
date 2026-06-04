@@ -99,6 +99,46 @@ def read_priority_exhibitions(filepath: str) -> str:
     return "\n".join(lines)
 
 
+def find_homepage(company: str) -> str:
+    queries = [f"{company} official website", f"{company} trang chủ"]
+    results = []
+    for q in queries:
+        with DDGS() as ddgs:
+            for r in ddgs.text(q, max_results=8):
+                link = r.get("href") or ""
+                if any(d in link.lower() for d in SPAM_DOMAINS + BLOCKED_DOMAINS):
+                    continue
+                results.append({"link": link, "title": r.get("title", "")})
+    name_parts = company.lower().split()
+
+    def domain(link):
+        return urlparse(link).hostname or ""
+
+    def name_in_domain(link):
+        d = domain(link).replace("www.", "")
+        segs = d.split(".")
+        joined = company.lower().replace(" ", "")
+        if any(joined == s for s in segs):
+            return True
+        for p in name_parts:
+            if len(p) > 3 and any(p == s for s in segs):
+                return True
+        return False
+
+    for r in results:
+        link = r["link"]
+        if name_in_domain(link):
+            return link
+    for r in results:
+        link = r["link"]
+        title = r["title"].lower()
+        has_c = any(p in title for p in name_parts if len(p) > 3)
+        has_o = any(w in title for w in ["official", "home", "trang ch"])
+        if has_c and has_o:
+            return link
+    return results[0]["link"] if results else ""
+
+
 async def main():
     excel_path = r"D:\Search_Imex\AIPT_Global_Defense_Security_Exhibitions_Full_Database.xlsx"
     query = "Máy bay không người lái"
@@ -209,7 +249,11 @@ Hướng dẫn:
     print("KẾT QUẢ:")
     print("=" * 50)
     for v in found:
-        print(f'{"✅" if v["match"] else "?"} {v["company"]:30s}')
+        hp = v["homepage"]
+        if not hp:
+            hp = find_homepage(v["company"])
+            v["homepage"] = hp
+        print(f'{"✅" if v["match"] else "?"} {v["company"]:30s} | {hp or "ko có"}')
 
 
 if __name__ == "__main__":
