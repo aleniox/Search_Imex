@@ -23,7 +23,7 @@ class DuckDuckGoProvider(BaseSearchProvider):
         for query in queries:
             results = []
             with DDGS() as ddgs:
-                for r in ddgs.text(query, max_results=8):
+                for r in ddgs.text(query, max_results=5):
                     link = r.get("href") or ""
                     if any(d in link.lower() for d in SPAM_DOMAINS):
                         continue

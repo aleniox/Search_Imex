@@ -8,6 +8,7 @@ from core.searcher import Searcher
 from core.extractor import CompanyExtractor
 from core.reporter import ReportCompiler
 from core.search_providers import BaseSearchProvider
+import json
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -39,14 +40,15 @@ class ProductDiscoveryAgent:
 
         en_query = self.llm.call(
             """
-        You are a B2B market research expert.
+        You are an expert sourcing and supplier discovery assistant.
 
-        Convert the user request into high-quality English search queries to find companies, vendors, and solution providers.
+        Given a product or technology, generate English search queries that help find real manufacturers, suppliers, vendors, distributors, and solution providers.
 
-        Return ONLY valid JSON in this format:
+        Return ONLY valid JSON:
 
         {
         "search_queries": [
+            "...",
             "...",
             "...",
             "..."
@@ -54,19 +56,41 @@ class ProductDiscoveryAgent:
         }
 
         Rules:
-        - Generate 4-6 search queries
-        - Each query must be optimized for finding real companies/vendors
-        - Must include keywords like: companies, vendors, providers, solutions, platform, software
-        - No explanation, no extra fields, no markdown
+        - Generate 6 search queries
+        - Focus on discovering real companies
+        - Prioritize manufacturer and supplier discovery
+        - Use industry terminology when appropriate
+        - Include different company types:
+        - manufacturers
+        - suppliers
+        - vendors
+        - distributors
+        - solution providers
+        - Avoid duplicate queries
+        - Avoid simply replacing one synonym with another
+        - Keep queries concise
+        - No explanations
+        - No markdown
+        - No extra fields
+
+        Query patterns should include:
+        - <product> manufacturer
+        - <product> supplier
+        - <product> vendor
+        - <product> company
+        - <product> solutions
+        - industry-specific variations
         """,
-            f"User request: {user_query}",
+            f"Product: {user_query}",
         )
         if en_query:
             en_query = en_query.strip().strip('"\'')
         logger.info(f"   English: {en_query}")
 
         self._set_progress(0.1, "Đang search web...")
-        results = self.searcher.search([en_query or user_query])
+        data = json.loads(en_query)
+        search_queries = data.get("search_queries", [])
+        results = self.searcher.search(search_queries or [user_query])
         logger.info(f"   Got {len(results)} search results")
 
         self._set_progress(0.2, "Đang crawl & trích xuất hãng...")
