@@ -15,12 +15,11 @@ class ExhibitorFinder:
 
     async def find_exhibitors(self, exhibition_name: str) -> list[str]:
         queries = [
-            f"{exhibition_name} exhibitors list 2025",
+            f"{exhibition_name} exhibitors list",
             f"{exhibition_name} exhibitor list",
         ]
         results = self.searcher.search(queries)
         urls = list(dict.fromkeys(r["link"] for r in results if r.get("link")))
-
         companies = {}
         for url in urls[:2]:
             md = await self.crawler.crawl(url)

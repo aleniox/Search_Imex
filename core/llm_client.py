@@ -4,13 +4,14 @@ import requests
 
 load_dotenv()
 
-LLM_API = os.getenv("LLM_API_URL", "http://localhost:8080/v1/chat/completions")
+LLM_API = os.getenv("LLM_API_URL", "http://10.0.99.116:8070/v1/chat/completions")
 
 
 def call_chat_api(messages, model="", stream=True, max_token=40000, host=LLM_API):
     payload = {
         "model": model, "messages": messages, "stream": stream,
         "options": {"temperature": 0.0, "top_p": 0.95, "top_k": 64, "num_ctx": max_token},
+        "chat_template_kwargs": {"enable_thinking": False}
     }
     return requests.post(host, json=payload, stream=stream)
 

@@ -28,36 +28,78 @@ class PriorityExhibitionAgent:
         if self._progress:
             self._progress(pct, desc=msg)
 
-    def _filter_exhibitions(self, exhibitions: list, query: str) -> list:
+    def filter_exhibitions(self, exhibitions: list, query: str) -> list:
+        import json
+        import re
         lines = "\n".join(
             f"{i+1}. {e.name} | Category: {e.category} | Tags: {e.tags}"
             for i, e in enumerate(exhibitions)
         )
-        prompt = f"""From the list below, select exhibitions whose category or tags are RELEVANT to: "{query}"
-Return only the line numbers of relevant exhibitions, separated by commas.
-If none, return: NONE
+        prompt = f"""Bạn là một chuyên gia phân tích triển lãm thương mại B2B. 
+Nhiệm vụ của bạn là phân tích danh sách triển lãm dưới đây và chọn ra những triển lãm có khả năng cao quy tụ các NHÀ CUNG CẤP (suppliers/vendors) cung cấp giải pháp hoặc sản phẩm mà người dùng đang tìm kiếm.
 
-{lines}"""
-        result = self.llm.call("You are a domain expert in defense and security exhibitions.", prompt)
-        if not result or result.strip().upper() == "NONE":
-            return []
-        indices = set()
-        for part in result.split(","):
-            part = part.strip()
-            if part.isdigit():
+Yêu cầu tìm kiếm giải pháp của người dùng:
+<user query>
+"{query}"
+</user query>
+
+Yêu cầu đầu ra:
+Chỉ trả về duy nhất một mảng JSON (JSON array) chứa các đối tượng. Không viết thêm lời dẫn nhập, không giải thích dông dài.
+Nếu không có triển lãm nào phù hợp, trả về một mảng rỗng: []
+
+Cấu trúc JSON bắt buộc:
+[
+  {{
+    "index": 1,
+    "exhibition_name": "Tên chính xác của triển lãm",
+    "score": 85,
+    "reason": "Lý do ngắn gọn (dưới 20 từ) giải thích vì sao triển lãm này quy tụ các nhà cung cấp giải pháp `{query}`"
+  }}
+]
+
+Danh sách triển lãm cần phân tích (được đánh số thứ tự):
+<danh sách triển lãm>
+{lines}
+</danh sách triển lãm>
+"""
+
+        result_str = self.llm.call("Bạn dùng để thực hiện nhiệm vụ phân loại triển lãm.", prompt)
+        try:
+            # Tìm JSON trong response
+            json_match = re.search(r"\[.*\]", result_str, re.DOTALL)
+            if json_match:
+                data = json.loads(json_match.group(0))
+            else:
+                data = json.loads(result_str)
+            
+            indices = set()
+            for item in data:
+                idx = int(item.get("index")) - 1
+                if 0 <= idx < len(exhibitions):
+                    logger.info(f"   [Lọc] Chọn: {exhibitions[idx].name} (Score: {item.get('score')}) - Lý do: {item.get('reason')}")
+                    indices.add(idx)
+            return [exhibitions[i] for i in sorted(indices)]
+        except Exception as e:
+            logger.error(f"Lỗi phân tích JSON từ LLM: {e}. Thử fallback tìm số.")
+            indices = set()
+            for part in re.findall(r"\d+", result_str):
                 idx = int(part) - 1
                 if 0 <= idx < len(exhibitions):
                     indices.add(idx)
-        return [exhibitions[i] for i in sorted(indices)]
+            return [exhibitions[i] for i in sorted(indices)]
 
-    async def run(self, excel_path: str, user_query: str) -> str:
+    async def run(self, excel_path: str, user_query: str, scan_all: bool=False) -> str:
         self._set_progress(0.02, "Đọc file Excel...")
         exhibitions = read_priority_exhibitions(excel_path)
         logger.info(f"Bước 1a: {len(exhibitions)} triển lãm (tất cả)")
 
-        self._set_progress(0.03, "Lọc triển lãm theo yêu cầu...")
-        exhibitions = self._filter_exhibitions(exhibitions, user_query)
-        logger.info(f"Bước 1b: {len(exhibitions)} triển lãm phù hợp với yêu cầu")
+        if not scan_all:
+            self._set_progress(0.03, "Lọc triển lãm theo yêu cầu...")
+            exhibitions = self.filter_exhibitions(exhibitions, user_query)
+            logger.info(f"Bước 1b: {len(exhibitions)} triển lãm phù hợp với yêu cầu")
+        else:
+            logger.info("Bỏ qua bước lọc, quét tất cả triển lãm theo yêu cầu (scan_all=True)")
+
         if not exhibitions:
             return "Không có triển lãm nào phù hợp với yêu cầu."
 
@@ -81,25 +123,37 @@ If none, return: NONE
         if not unique:
             return "Không tìm thấy hãng nào từ danh sách triển lãm."
 
+
+        
         self._set_progress(0.60, f"Tìm sản phẩm cho từng hãng theo yêu cầu...")
-        relevant = await self._find_relevant_companies(unique, user_query)
-        logger.info(f"   Số hãng có sản phẩm phù hợp: {len(relevant)}")
+        
+        companies_with_products = []
+        for i, company in enumerate(unique):
+            homepage_link = self.searcher.find_homepage(company)
+            logger.info(f"   [{i+1}/{len(unique)}] {company} → {homepage_link or 'không tìm thấy homepage'}")
+            homepage_rawl = self.crawler._crawl_playwright(homepage_link) if homepage_link else ""
+            if homepage_rawl:
+                # products = self.extractor.extract(homepage_rawl, user_query)
+                products = self.extractor.matchCompany(homepage_rawl, user_query)
+                if products:
+                    match_cmp = products["answer"]
+                    related_products = products["products"]
+                    if match_cmp:
+                        logger.info(f"   ✅ {company} có cung cấp sản phẩm liên quan đến yêu cầu")
+                        logger.info(f"       → Sản phẩm liên quan: {related_products}")
+                        companies_with_products.append({
+                            "company": company,
+                            "products": related_products,
+                            "homepage": homepage_link,
+                        })
+                        if not scan_all:
+                            break
+                    else:
+                        logger.info(f"   ❌ {company} không cung cấp sản phẩm liên quan đến yêu cầu")
+                        
+                    logger.info(f"       → {related_products} sản phẩm liên quan từ homepage")
 
-        if not relevant:
-            return "Không có hãng nào phù hợp với yêu cầu."
-
-        self._set_progress(0.80, f"Tìm homepage cho {len(relevant)} hãng...")
-        homepages = []
-        for i, company in enumerate(relevant):
-            self._set_progress(0.80 + 0.15 * (i + 1) / len(relevant), f"Tìm homepage: {company}")
-            url = self.searcher.find_homepage(company)
-            homepages.append({"company": company, "url": url})
-            logger.info(f"   {'✅' if url else '❌'} {company} -> {url or 'không tìm thấy'}")
-
-        self._set_progress(0.95, "Tổng hợp báo cáo...")
-        report = self.reporter.compile(user_query, relevant, homepages)
-        self._set_progress(1.0, "Hoàn tất!")
-        return report
+        return companies_with_products
 
     async def _find_relevant_companies(self, companies: list[str], query: str) -> list[str]:
         async def check(company: str) -> str | None:

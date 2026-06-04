@@ -38,15 +38,35 @@ class ProductDiscoveryAgent:
         logger.info(f"Step 1: Search URLs for: {user_query}")
 
         en_query = self.llm.call(
-            "You are a translator. Return only the English translation, nothing else.",
-            f"Translate to English: {user_query}",
+            """
+        You are a B2B market research expert.
+
+        Convert the user request into high-quality English search queries to find companies, vendors, and solution providers.
+
+        Return ONLY valid JSON in this format:
+
+        {
+        "search_queries": [
+            "...",
+            "...",
+            "..."
+        ]
+        }
+
+        Rules:
+        - Generate 4-6 search queries
+        - Each query must be optimized for finding real companies/vendors
+        - Must include keywords like: companies, vendors, providers, solutions, platform, software
+        - No explanation, no extra fields, no markdown
+        """,
+            f"User request: {user_query}",
         )
         if en_query:
             en_query = en_query.strip().strip('"\'')
         logger.info(f"   English: {en_query}")
 
         self._set_progress(0.1, "Đang search web...")
-        results = self.searcher.search([user_query, en_query or user_query])
+        results = self.searcher.search([en_query or user_query])
         logger.info(f"   Got {len(results)} search results")
 
         self._set_progress(0.2, "Đang crawl & trích xuất hãng...")
