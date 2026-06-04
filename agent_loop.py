@@ -150,15 +150,15 @@ Hướng dẫn:
 - extract_web website hãng để xác nhận họ có sản phẩm phù hợp không
 - Chỉ thêm hãng vào imex khi đã xác nhận qua website của họ</task>"""
 
-        resp = call_llm(system_prompt, user)
-        if not resp:
+        content, usage = call_llm(system_prompt, user)
+        if not content:
             print("LLM không phản hồi")
             continue
 
-        print(f"LLM: {resp[:300]}")
+        print(f"LLM: {content[:300]}")
 
         try:
-            actions = extract_json(resp)
+            actions = extract_json(content)
         except Exception as e:
             print(f"Parse JSON lỗi: {e}")
             continue
